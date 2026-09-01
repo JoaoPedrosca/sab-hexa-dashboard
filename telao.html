@@ -405,8 +405,8 @@ body{background:#000;color:var(--ink);font-family:var(--font-body);overflow:hidd
             <b>quem fecha primeiro?</b>
           </div>
         </div>
-        <div class="poll-bars"><div class="poll-row"><span style="color:var(--ink-faint);font-size:13px">Aguardando os primeiros palpites&#8230;</span></div></div>
-        <div class="poll-foot">0 palpites</div>
+        <div class="poll-bars" id="poll-bars"><div class="poll-row"><span style="color:var(--ink-faint);font-size:13px">Aguardando os primeiros palpites&#8230;</span></div></div>
+        <div class="poll-foot"><span id="poll-foot">0 palpites</span> &middot; <span id="poll-updated">atualizado &agrave;s 23h56</span></div>
       </div>
     </div></div>
   </div>
@@ -420,7 +420,7 @@ body{background:#000;color:var(--ink);font-family:var(--font-body);overflow:hidd
       <div class="legend-item"><span class="legend-dot" style="background:var(--ink);box-shadow:0 0 0 2px var(--red)"></span>Atingido &middot; 5V</div>
       <div class="legend-item" style="color:var(--ink-faint)">* estimativa por forma, sem odds de mercado</div>
     </div>
-    <div class="foot-src">Odds reais de mercado onde h&aacute; cobertura &middot; estimativa por forma no resto &middot; <b>dados de 31/08 23h43</b> &middot; Sportmonks</div>
+    <div class="foot-src">Odds reais de mercado onde h&aacute; cobertura &middot; estimativa por forma no resto &middot; <b>dados de 31/08 23h56</b> &middot; Sportmonks</div>
   </div>
 
 </div>
@@ -443,6 +443,90 @@ body{background:#000;color:var(--ink);font-family:var(--font-body);overflow:hidd
   }
   tick();
   setInterval(tick, 1000);
+
+  // Recarrega sozinho às 8h de Brasília (11h UTC, fixo — sem horário de
+  // verão desde 2019) pra garantir que a página aberta na TV pega a
+  // geração diária nova, mesmo que ninguém dê F5 manualmente.
+  function msAteProximoReload(){
+    var agora = new Date();
+    var alvo = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate(), 11, 5, 0));
+    if (alvo <= agora) alvo.setUTCDate(alvo.getUTCDate() + 1);
+    return alvo - agora;
+  }
+  setTimeout(function(){ location.reload(); }, msAteProximoReload());
+})();
+
+// Palpite da torcida: se a planilha de respostas estiver publicada na
+// web como CSV (PALPITE_CSV_URL), atualiza a contagem no navegador a
+// cada 10 min — sem depender de rodar o pipeline de novo.
+(function(){
+  var POLL_CSV_URL = null;
+  if (!POLL_CSV_URL) return;
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function parseCsv(text){
+    var rows = [], row = [], field = '', inQuotes = false;
+    for (var i = 0; i < text.length; i++){
+      var c = text[i];
+      if (inQuotes){
+        if (c === '"'){ if (text[i+1] === '"'){ field += '"'; i++; } else inQuotes = false; }
+        else field += c;
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\n' || c === '\r'){
+          if (c === '\r' && text[i+1] === '\n') i++;
+          row.push(field); field = ''; rows.push(row); row = [];
+        } else field += c;
+      }
+    }
+    if (field.length || row.length){ row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function atualizarPalpites(){
+    fetch(POLL_CSV_URL, {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(text){
+      var linhas = parseCsv(text).slice(1).filter(function(r){ return r.length > 1 && r[1]; });
+      var contagem = {};
+      linhas.forEach(function(r){
+        var clube = r[1].trim();
+        if (!clube) return;
+        contagem[clube] = (contagem[clube] || 0) + 1;
+      });
+      var total = linhas.length;
+      var ranking = Object.keys(contagem).map(function(k){ return [k, contagem[k]]; })
+        .sort(function(a, b){ return b[1] - a[1]; }).slice(0, 4);
+
+      var bars = document.getElementById('poll-bars');
+      if (bars){
+        if (!ranking.length){
+          bars.innerHTML = '<div class="poll-row"><span style="color:var(--ink-faint);font-size:13px">Aguardando os primeiros palpites&#8230;</span></div>';
+        } else {
+          bars.innerHTML = ranking.map(function(item){
+            var pct = Math.round(item[1] / total * 100);
+            return '<div class="poll-row"><span class="poll-name">' + escapeHtml(item[0]) + '</span>' +
+              '<div class="poll-track"><div class="poll-fill" style="width:' + pct + '%"></div></div>' +
+              '<span class="poll-pct">' + pct + '%</span></div>';
+          }).join('');
+        }
+      }
+      var foot = document.getElementById('poll-foot');
+      if (foot) foot.textContent = total + (total === 1 ? ' palpite' : ' palpites');
+      var upd = document.getElementById('poll-updated');
+      if (upd){
+        var opts = {timeZone:'America/Sao_Paulo', hour:'2-digit', minute:'2-digit', hour12:false};
+        upd.textContent = 'atualizado \u00e0s ' + new Intl.DateTimeFormat('pt-BR', opts).format(new Date());
+      }
+    }).catch(function(){ /* silencioso: mantém o último estado bom na tela */ });
+  }
+
+  atualizarPalpites();
+  setInterval(atualizarPalpites, 10 * 60 * 1000);
 })();
 </script>
 </body></html>
